@@ -4,3 +4,5 @@ dependencies.lock
 sdkconfig
 sdkconfig.old
 .vscode/*.log
+
+*.zip

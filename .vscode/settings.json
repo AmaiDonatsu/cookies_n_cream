@@ -6,5 +6,6 @@
   "search.exclude": {
     "**/build": true,
     "**/managed_components": true
-  }
+  },
+  "idf.currentSetup": "C:\\esp\\v6.0.1\\esp-idf"
 }

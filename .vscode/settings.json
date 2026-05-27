@@ -1,0 +1,10 @@
+{
+  "files.exclude": {
+    "**/build": true,
+    "**/managed_components": true
+  },
+  "search.exclude": {
+    "**/build": true,
+    "**/managed_components": true
+  }
+}

@@ -1,4 +1,6 @@
 {
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "C_Cpp.default.configurationProvider": "espressif.esp-idf-extension",
   "files.exclude": {
     "**/build": true,
     "**/managed_components": true

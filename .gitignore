@@ -6,3 +6,4 @@ sdkconfig.old
 .vscode/*.log
 
 *.zip
+main/wifi_credentials.h

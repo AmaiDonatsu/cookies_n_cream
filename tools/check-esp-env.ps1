@@ -1,6 +1,8 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "SilentlyContinue"
 
+. "$PSScriptRoot\esp-idf-env.ps1"
+
 function Get-EnvOrDefault {
     param(
         [AllowNull()]
@@ -33,6 +35,12 @@ function Show-CommandStatus {
 
 Write-Host "=== Revision rapida del entorno ESP-IDF ==="
 Write-Host ""
+
+$activated = Import-EspIdfEnvironment -Quiet
+if ($activated) {
+    Write-Host "[OK]     entorno ESP-IDF activado automaticamente"
+    Write-Host ""
+}
 
 Show-CommandStatus -Name "idf.py"
 Show-CommandStatus -Name "git"

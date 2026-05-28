@@ -8,8 +8,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if (-not (Get-Command "idf.py" -ErrorAction SilentlyContinue)) {
-    Write-Error "No encuentro 'idf.py'. Abre este proyecto desde 'ESP-IDF PowerShell' despues de instalar ESP-IDF."
+. "$PSScriptRoot\esp-idf-env.ps1"
+
+if (-not (Import-EspIdfEnvironment -Quiet)) {
+    Write-Error "No encuentro 'idf.py'. Instala ESP-IDF con EIM o abre este proyecto desde 'ESP-IDF PowerShell'."
 }
 
 switch ($Action) {

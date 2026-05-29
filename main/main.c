@@ -1,24 +1,31 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "wifi_config.h"
+#include "bmp280_probe.h"
 
 static const char *TAG = "cookies_n_cream";
 
 void app_main(void)
 {
-    wifi_init_sta();
+    float temperature_c = 0.0f;
 
-    int counter = 0;
+    ESP_LOGI(TAG, "Modo debug limpio: solo prueba BMP280 por I2C.");
+    ESP_LOGI(TAG, "Wi-Fi desactivado temporalmente para aislar el problema del sensor.");
 
-    ESP_LOGI(TAG, "ESP-IDF listo. Si lees esto por UART, ya tenemos toolchain + flash + monitor funcionando.");
+    if (!bmp280_init()) {
+        while (1) {
+            ESP_LOGW(TAG, "BMP280 no disponible. Revisa cableado y reinicia para reintentar.");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    }
 
     while (1) {
-        if (wifi_esta_conectado()) {
-            ESP_LOGI(TAG, "Heartbeat %d", counter++);
+        if (bmp280_read_temperature_c(&temperature_c)) {
+            ESP_LOGI(TAG, "Temperatura BMP280: %.2f C", temperature_c);
         } else {
-            ESP_LOGI(TAG, "Esperando conexion Wi-Fi...");
+            ESP_LOGW(TAG, "No pude leer la temperatura del BMP280 en este ciclo.");
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }

@@ -1,0 +1,214 @@
+#include "esp_err.h"
+#include "esp_log.h"
+#include "driver/i2c.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "bmp280_probe.h"
+
+static const char *TAG = "bmp280_probe";
+
+#define I2C_PORT I2C_NUM_0
+#define I2C_SDA_GPIO 6
+#define I2C_SCL_GPIO 7
+#define I2C_FREQ_HZ 100000
+#define I2C_TIMEOUT_MS 100
+
+#define BMP280_ADDR_LOW 0x76
+#define BMP280_ADDR_HIGH 0x77
+#define BMP280_CALIB_START_REG 0x88
+#define BMP280_CHIP_ID_REG 0xD0
+#define BMP280_STATUS_REG 0xF3
+#define BMP280_CTRL_MEAS_REG 0xF4
+#define BMP280_CONFIG_REG 0xF5
+#define BMP280_TEMP_MSB_REG 0xFA
+#define BMP280_CHIP_ID 0x58
+#define BME280_CHIP_ID 0x60
+
+typedef struct {
+    uint16_t dig_t1;
+    int16_t dig_t2;
+    int16_t dig_t3;
+} bmp280_calibration_t;
+
+static bool i2c_iniciado = false;
+static bool bmp280_inicializado = false;
+static uint8_t bmp280_addr = 0;
+static int32_t bmp280_t_fine = 0;
+static bmp280_calibration_t bmp280_calibration = {0};
+
+static void i2c_init_if_needed(void)
+{
+    if (i2c_iniciado) {
+        return;
+    }
+
+    i2c_config_t config = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_SDA_GPIO,
+        .scl_io_num = I2C_SCL_GPIO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_FREQ_HZ,
+    };
+
+    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &config));
+    ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, config.mode, 0, 0, 0));
+
+    i2c_iniciado = true;
+}
+
+static esp_err_t leer_registro_u8(uint8_t addr, uint8_t reg, uint8_t *valor)
+{
+    return i2c_master_write_read_device(
+        I2C_PORT,
+        addr,
+        &reg,
+        sizeof(reg),
+        valor,
+        1,
+        pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+}
+
+static esp_err_t leer_registros(uint8_t addr, uint8_t reg, uint8_t *buffer, size_t len)
+{
+    return i2c_master_write_read_device(
+        I2C_PORT,
+        addr,
+        &reg,
+        sizeof(reg),
+        buffer,
+        len,
+        pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+}
+
+static esp_err_t escribir_registro_u8(uint8_t addr, uint8_t reg, uint8_t value)
+{
+    uint8_t payload[2] = {reg, value};
+
+    return i2c_master_write_to_device(I2C_PORT, addr, payload, sizeof(payload), pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+}
+
+static esp_err_t detectar_bmp280(uint8_t *detected_addr, uint8_t *chip_id)
+{
+    esp_err_t ret = leer_registro_u8(BMP280_ADDR_LOW, BMP280_CHIP_ID_REG, chip_id);
+    if (ret == ESP_OK) {
+        *detected_addr = BMP280_ADDR_LOW;
+        return ESP_OK;
+    }
+
+    ret = leer_registro_u8(BMP280_ADDR_HIGH, BMP280_CHIP_ID_REG, chip_id);
+    if (ret == ESP_OK) {
+        *detected_addr = BMP280_ADDR_HIGH;
+        return ESP_OK;
+    }
+
+    return ret;
+}
+
+static void cargar_calibracion_temperatura(uint8_t *buffer)
+{
+    bmp280_calibration.dig_t1 = (uint16_t)((buffer[1] << 8) | buffer[0]);
+    bmp280_calibration.dig_t2 = (int16_t)((buffer[3] << 8) | buffer[2]);
+    bmp280_calibration.dig_t3 = (int16_t)((buffer[5] << 8) | buffer[4]);
+}
+
+static bool bmp280_configurar_medicion(void)
+{
+    uint8_t status = 0;
+
+    if (escribir_registro_u8(bmp280_addr, BMP280_CONFIG_REG, 0x00) != ESP_OK) {
+        return false;
+    }
+
+    if (escribir_registro_u8(bmp280_addr, BMP280_CTRL_MEAS_REG, 0x27) != ESP_OK) {
+        return false;
+    }
+
+    for (int i = 0; i < 10; i++) {
+        if (leer_registro_u8(bmp280_addr, BMP280_STATUS_REG, &status) != ESP_OK) {
+            return false;
+        }
+
+        if ((status & 0x09) == 0) {
+            return true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    return true;
+}
+
+bool bmp280_init(void)
+{
+    uint8_t chip_id = 0;
+    uint8_t calibration_raw[6] = {0};
+    esp_err_t ret = ESP_FAIL;
+
+    i2c_init_if_needed();
+    ESP_LOGI(TAG, "Bus I2C listo en SDA=GPIO%d, SCL=GPIO%d.", I2C_SDA_GPIO, I2C_SCL_GPIO);
+
+    ret = detectar_bmp280(&bmp280_addr, &chip_id);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No pude leer el BMP280 por I2C.");
+        ESP_LOGW(TAG, "Revisa VCC/GND, que CSB vaya a 3.3V, y que SDA/SCL realmente esten en GPIO6/GPIO7.");
+        return false;
+    }
+
+    if (chip_id == BMP280_CHIP_ID) {
+        ESP_LOGI(TAG, "BMP280 detectado correctamente en 0x%02X con chip ID 0x%02X.", bmp280_addr, chip_id);
+    } else if (chip_id == BME280_CHIP_ID) {
+        ESP_LOGW(TAG, "El sensor respondio en 0x%02X, pero su chip ID es 0x%02X: eso parece un BME280, no un BMP280.", bmp280_addr, chip_id);
+    } else {
+        ESP_LOGW(TAG, "Hay algo respondiendo en 0x%02X, pero el chip ID fue 0x%02X y no coincide con BMP280.", bmp280_addr, chip_id);
+        return false;
+    }
+
+    ret = leer_registros(bmp280_addr, BMP280_CALIB_START_REG, calibration_raw, sizeof(calibration_raw));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "No pude leer la calibracion del BMP280.");
+        return false;
+    }
+
+    cargar_calibracion_temperatura(calibration_raw);
+
+    if (!bmp280_configurar_medicion()) {
+        ESP_LOGE(TAG, "No pude configurar la medicion del BMP280.");
+        return false;
+    }
+
+    bmp280_inicializado = true;
+    return true;
+}
+
+bool bmp280_read_temperature_c(float *temperature_c)
+{
+    uint8_t raw_temp[3] = {0};
+    int32_t adc_t;
+    int32_t var1;
+    int32_t var2;
+    int32_t temp_x100;
+
+    if (!bmp280_inicializado || temperature_c == NULL) {
+        return false;
+    }
+
+    if (leer_registros(bmp280_addr, BMP280_TEMP_MSB_REG, raw_temp, sizeof(raw_temp)) != ESP_OK) {
+        return false;
+    }
+
+    adc_t = (int32_t)((raw_temp[0] << 12) | (raw_temp[1] << 4) | (raw_temp[2] >> 4));
+
+    var1 = ((((adc_t >> 3) - ((int32_t)bmp280_calibration.dig_t1 << 1))) * ((int32_t)bmp280_calibration.dig_t2)) >> 11;
+    var2 = (((((adc_t >> 4) - ((int32_t)bmp280_calibration.dig_t1)) *
+              ((adc_t >> 4) - ((int32_t)bmp280_calibration.dig_t1))) >> 12) *
+            ((int32_t)bmp280_calibration.dig_t3)) >> 14;
+
+    bmp280_t_fine = var1 + var2;
+    temp_x100 = (bmp280_t_fine * 5 + 128) >> 8;
+    *temperature_c = temp_x100 / 100.0f;
+
+    return true;
+}

@@ -12,6 +12,7 @@ static const char *TAG = "cookies_n_cream";
 void app_main(void)
 {
     float temperature_c = 0.0f;
+    float pressure_hpa = 0.0f;
     bool mqtt_started = false;
     bool clock_ready = false;
 
@@ -28,8 +29,8 @@ void app_main(void)
     wifi_init_sta();
 
     while (1) {
-        if (bmp280_read_temperature_c(&temperature_c)) {
-            ESP_LOGI(TAG, "Temperatura BMP280: %.2f C", temperature_c);
+        if (bmp280_read_temperature_and_pressure(&temperature_c, &pressure_hpa)) {
+            ESP_LOGI(TAG, "BMP280 -> Temperatura: %.2f C, Presion: %.2f hPa", temperature_c, pressure_hpa);
 
             if (wifi_esta_conectado() && !mqtt_started) {
                 if (!clock_ready) {
@@ -42,8 +43,8 @@ void app_main(void)
             }
 
             if (mqtt_started && mqtt_telemetry_connected()) {
-                if (mqtt_telemetry_publish_temperature(temperature_c) != ESP_OK) {
-                    ESP_LOGW(TAG, "No pude publicar la temperatura en este ciclo.");
+                if (mqtt_telemetry_publish_environment(temperature_c, pressure_hpa) != ESP_OK) {
+                    ESP_LOGW(TAG, "No pude publicar temperatura y presion en este ciclo.");
                 }
             } else if (!wifi_esta_conectado()) {
                 ESP_LOGI(TAG, "Esperando conexion Wi-Fi antes de publicar telemetria.");
@@ -53,7 +54,7 @@ void app_main(void)
                 ESP_LOGI(TAG, "Esperando conexion MQTT antes de publicar telemetria.");
             }
         } else {
-            ESP_LOGW(TAG, "No pude leer la temperatura del BMP280 en este ciclo.");
+            ESP_LOGW(TAG, "No pude leer temperatura y presion del BMP280 en este ciclo.");
         }
 
         vTaskDelay(pdMS_TO_TICKS(MQTT_PUBLISH_INTERVAL_MS));

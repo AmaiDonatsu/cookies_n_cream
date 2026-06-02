@@ -133,7 +133,12 @@ bool mqtt_telemetry_connected(void)
 
 esp_err_t mqtt_telemetry_publish_temperature(float temperature_c)
 {
-    char payload[256];
+    return mqtt_telemetry_publish_environment(temperature_c, 0.0f);
+}
+
+esp_err_t mqtt_telemetry_publish_environment(float temperature_c, float pressure_hpa)
+{
+    char payload[512];
     char timestamp[32] = {0};
     int msg_id = -1;
     int payload_len = 0;
@@ -147,19 +152,21 @@ esp_err_t mqtt_telemetry_publish_temperature(float temperature_c)
         payload_len = snprintf(
             payload,
             sizeof(payload),
-            "{\"deviceId\":\"%s\",\"timestamp\":\"%s\",\"uptimeMs\":%" PRIu64 ",\"temperature\":%.2f,\"status\":\"active\"}",
+            "{\"deviceId\":\"%s\",\"timestamp\":\"%s\",\"uptimeMs\":%" PRIu64 ",\"status\":\"active\",\"readings\":[{\"type\":\"temperature\",\"value\":%.2f,\"unit\":\"°C\",\"label\":\"Temperatura\"},{\"type\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\",\"label\":\"Presion\"}]}",
             MQTT_DEVICE_ID,
             timestamp,
             uptime_ms,
-            temperature_c);
+            temperature_c,
+            pressure_hpa);
     } else {
         payload_len = snprintf(
             payload,
             sizeof(payload),
-            "{\"deviceId\":\"%s\",\"timestamp\":null,\"uptimeMs\":%" PRIu64 ",\"temperature\":%.2f,\"status\":\"active\"}",
+            "{\"deviceId\":\"%s\",\"timestamp\":null,\"uptimeMs\":%" PRIu64 ",\"status\":\"active\",\"readings\":[{\"type\":\"temperature\",\"value\":%.2f,\"unit\":\"°C\",\"label\":\"Temperatura\"},{\"type\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\",\"label\":\"Presion\"}]}",
             MQTT_DEVICE_ID,
             uptime_ms,
-            temperature_c);
+            temperature_c,
+            pressure_hpa);
     }
 
     if (payload_len <= 0 || payload_len >= (int)sizeof(payload)) {
@@ -171,6 +178,6 @@ esp_err_t mqtt_telemetry_publish_temperature(float temperature_c)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Publicado a %s -> Temp: %.2f C", mqtt_topic, temperature_c);
+    ESP_LOGI(TAG, "Publicado a %s -> Temp: %.2f C, Presion: %.2f hPa", mqtt_topic, temperature_c, pressure_hpa);
     return ESP_OK;
 }

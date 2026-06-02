@@ -29,6 +29,15 @@ typedef struct {
     uint16_t dig_t1;
     int16_t dig_t2;
     int16_t dig_t3;
+    uint16_t dig_p1;
+    int16_t dig_p2;
+    int16_t dig_p3;
+    int16_t dig_p4;
+    int16_t dig_p5;
+    int16_t dig_p6;
+    int16_t dig_p7;
+    int16_t dig_p8;
+    int16_t dig_p9;
 } bmp280_calibration_t;
 
 static bool i2c_iniciado = false;
@@ -106,11 +115,20 @@ static esp_err_t detectar_bmp280(uint8_t *detected_addr, uint8_t *chip_id)
     return ret;
 }
 
-static void cargar_calibracion_temperatura(uint8_t *buffer)
+static void cargar_calibracion(uint8_t *buffer)
 {
     bmp280_calibration.dig_t1 = (uint16_t)((buffer[1] << 8) | buffer[0]);
     bmp280_calibration.dig_t2 = (int16_t)((buffer[3] << 8) | buffer[2]);
     bmp280_calibration.dig_t3 = (int16_t)((buffer[5] << 8) | buffer[4]);
+    bmp280_calibration.dig_p1 = (uint16_t)((buffer[7] << 8) | buffer[6]);
+    bmp280_calibration.dig_p2 = (int16_t)((buffer[9] << 8) | buffer[8]);
+    bmp280_calibration.dig_p3 = (int16_t)((buffer[11] << 8) | buffer[10]);
+    bmp280_calibration.dig_p4 = (int16_t)((buffer[13] << 8) | buffer[12]);
+    bmp280_calibration.dig_p5 = (int16_t)((buffer[15] << 8) | buffer[14]);
+    bmp280_calibration.dig_p6 = (int16_t)((buffer[17] << 8) | buffer[16]);
+    bmp280_calibration.dig_p7 = (int16_t)((buffer[19] << 8) | buffer[18]);
+    bmp280_calibration.dig_p8 = (int16_t)((buffer[21] << 8) | buffer[20]);
+    bmp280_calibration.dig_p9 = (int16_t)((buffer[23] << 8) | buffer[22]);
 }
 
 static bool bmp280_configurar_medicion(void)
@@ -143,7 +161,7 @@ static bool bmp280_configurar_medicion(void)
 bool bmp280_init(void)
 {
     uint8_t chip_id = 0;
-    uint8_t calibration_raw[6] = {0};
+    uint8_t calibration_raw[24] = {0};
     esp_err_t ret = ESP_FAIL;
 
     i2c_init_if_needed();
@@ -172,7 +190,7 @@ bool bmp280_init(void)
         return false;
     }
 
-    cargar_calibracion_temperatura(calibration_raw);
+    cargar_calibracion(calibration_raw);
 
     if (!bmp280_configurar_medicion()) {
         ESP_LOGE(TAG, "No pude configurar la medicion del BMP280.");
@@ -185,21 +203,31 @@ bool bmp280_init(void)
 
 bool bmp280_read_temperature_c(float *temperature_c)
 {
-    uint8_t raw_temp[3] = {0};
+    return bmp280_read_temperature_and_pressure(temperature_c, NULL);
+}
+
+bool bmp280_read_temperature_and_pressure(float *temperature_c, float *pressure_hpa)
+{
+    uint8_t raw_data[6] = {0};
     int32_t adc_t;
+    int32_t adc_p;
     int32_t var1;
     int32_t var2;
     int32_t temp_x100;
+    int64_t p_var1;
+    int64_t p_var2;
+    int64_t pressure_q24_8;
 
     if (!bmp280_inicializado || temperature_c == NULL) {
         return false;
     }
 
-    if (leer_registros(bmp280_addr, BMP280_TEMP_MSB_REG, raw_temp, sizeof(raw_temp)) != ESP_OK) {
+    if (leer_registros(bmp280_addr, 0xF7, raw_data, sizeof(raw_data)) != ESP_OK) {
         return false;
     }
 
-    adc_t = (int32_t)((raw_temp[0] << 12) | (raw_temp[1] << 4) | (raw_temp[2] >> 4));
+    adc_p = (int32_t)((raw_data[0] << 12) | (raw_data[1] << 4) | (raw_data[2] >> 4));
+    adc_t = (int32_t)((raw_data[3] << 12) | (raw_data[4] << 4) | (raw_data[5] >> 4));
 
     var1 = ((((adc_t >> 3) - ((int32_t)bmp280_calibration.dig_t1 << 1))) * ((int32_t)bmp280_calibration.dig_t2)) >> 11;
     var2 = (((((adc_t >> 4) - ((int32_t)bmp280_calibration.dig_t1)) *
@@ -210,5 +238,28 @@ bool bmp280_read_temperature_c(float *temperature_c)
     temp_x100 = (bmp280_t_fine * 5 + 128) >> 8;
     *temperature_c = temp_x100 / 100.0f;
 
+    if (pressure_hpa == NULL) {
+        return true;
+    }
+
+    p_var1 = ((int64_t)bmp280_t_fine) - 128000;
+    p_var2 = p_var1 * p_var1 * (int64_t)bmp280_calibration.dig_p6;
+    p_var2 = p_var2 + ((p_var1 * (int64_t)bmp280_calibration.dig_p5) << 17);
+    p_var2 = p_var2 + (((int64_t)bmp280_calibration.dig_p4) << 35);
+    p_var1 = ((p_var1 * p_var1 * (int64_t)bmp280_calibration.dig_p3) >> 8) +
+             ((p_var1 * (int64_t)bmp280_calibration.dig_p2) << 12);
+    p_var1 = (((((int64_t)1) << 47) + p_var1) * (int64_t)bmp280_calibration.dig_p1) >> 33;
+
+    if (p_var1 == 0) {
+        return false;
+    }
+
+    pressure_q24_8 = 1048576 - adc_p;
+    pressure_q24_8 = (((pressure_q24_8 << 31) - p_var2) * 3125) / p_var1;
+    p_var1 = (((int64_t)bmp280_calibration.dig_p9) * (pressure_q24_8 >> 13) * (pressure_q24_8 >> 13)) >> 25;
+    p_var2 = (((int64_t)bmp280_calibration.dig_p8) * pressure_q24_8) >> 19;
+    pressure_q24_8 = ((pressure_q24_8 + p_var1 + p_var2) >> 8) + (((int64_t)bmp280_calibration.dig_p7) << 4);
+
+    *pressure_hpa = (float)pressure_q24_8 / 25600.0f;
     return true;
 }

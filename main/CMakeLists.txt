@@ -1,6 +1,5 @@
 set(component_srcs
     "bmp280_probe.c"
-    "i2c_scanner.c"
     "wifi_config.c"
     "mqtt_telemetry.c"
     "time_sync.c"

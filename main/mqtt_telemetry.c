@@ -133,37 +133,57 @@ bool mqtt_telemetry_connected(void)
 
 esp_err_t mqtt_telemetry_publish_temperature(float temperature_c)
 {
-    return mqtt_telemetry_publish_environment(temperature_c, 0.0f);
+    return mqtt_telemetry_publish_environment_light(temperature_c, 0.0f, 0.0f, false);
 }
 
 esp_err_t mqtt_telemetry_publish_environment(float temperature_c, float pressure_hpa)
+{
+    return mqtt_telemetry_publish_environment_light(temperature_c, pressure_hpa, 0.0f, false);
+}
+
+esp_err_t mqtt_telemetry_publish_environment_light(float temperature_c, float pressure_hpa, float luminosity_lux, bool include_luminosity)
 {
     char payload[512];
     char timestamp[32] = {0};
     int msg_id = -1;
     int payload_len = 0;
     uint64_t uptime_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    const char *timestamp_value = "null";
+    const char *timestamp_prefix = "";
+    const char *timestamp_suffix = "";
 
     if (mqtt_client == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 
     if (time_sync_get_iso8601(timestamp, sizeof(timestamp))) {
+        timestamp_value = timestamp;
+        timestamp_prefix = "\"";
+        timestamp_suffix = "\"";
+    }
+
+    if (include_luminosity) {
         payload_len = snprintf(
             payload,
             sizeof(payload),
-            "{\"deviceId\":\"%s\",\"timestamp\":\"%s\",\"uptimeMs\":%" PRIu64 ",\"status\":\"active\",\"readings\":[{\"type\":\"temperature\",\"value\":%.2f,\"unit\":\"°C\",\"label\":\"Temperatura\"},{\"type\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\",\"label\":\"Presion\"}]}",
+            "{\"deviceId\":\"%s\",\"timestamp\":%s%s%s,\"uptimeMs\":%" PRIu64 ",\"status\":\"active\",\"readings\":[{\"type\":\"temperature\",\"value\":%.2f,\"unit\":\"°C\",\"label\":\"Temperatura\"},{\"type\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\",\"label\":\"Presion\"},{\"type\":\"luminosity\",\"value\":%.2f,\"unit\":\"lx\",\"label\":\"Luminosidad\"}]}",
             MQTT_DEVICE_ID,
-            timestamp,
+            timestamp_prefix,
+            timestamp_value,
+            timestamp_suffix,
             uptime_ms,
             temperature_c,
-            pressure_hpa);
+            pressure_hpa,
+            luminosity_lux);
     } else {
         payload_len = snprintf(
             payload,
             sizeof(payload),
-            "{\"deviceId\":\"%s\",\"timestamp\":null,\"uptimeMs\":%" PRIu64 ",\"status\":\"active\",\"readings\":[{\"type\":\"temperature\",\"value\":%.2f,\"unit\":\"°C\",\"label\":\"Temperatura\"},{\"type\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\",\"label\":\"Presion\"}]}",
+            "{\"deviceId\":\"%s\",\"timestamp\":%s%s%s,\"uptimeMs\":%" PRIu64 ",\"status\":\"active\",\"readings\":[{\"type\":\"temperature\",\"value\":%.2f,\"unit\":\"°C\",\"label\":\"Temperatura\"},{\"type\":\"pressure\",\"value\":%.2f,\"unit\":\"hPa\",\"label\":\"Presion\"}]}",
             MQTT_DEVICE_ID,
+            timestamp_prefix,
+            timestamp_value,
+            timestamp_suffix,
             uptime_ms,
             temperature_c,
             pressure_hpa);
@@ -178,6 +198,11 @@ esp_err_t mqtt_telemetry_publish_environment(float temperature_c, float pressure
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Publicado a %s -> Temp: %.2f C, Presion: %.2f hPa", mqtt_topic, temperature_c, pressure_hpa);
+    if (include_luminosity) {
+        ESP_LOGI(TAG, "Publicado a %s -> Temp: %.2f C, Presion: %.2f hPa, Luz: %.2f lx",
+                 mqtt_topic, temperature_c, pressure_hpa, luminosity_lux);
+    } else {
+        ESP_LOGI(TAG, "Publicado a %s -> Temp: %.2f C, Presion: %.2f hPa", mqtt_topic, temperature_c, pressure_hpa);
+    }
     return ESP_OK;
 }

@@ -1,18 +1,12 @@
 #include "esp_err.h"
 #include "esp_log.h"
-#include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include "bmp280_probe.h"
+#include "i2c_bus.h"
 
 static const char *TAG = "bmp280_probe";
-
-#define I2C_PORT I2C_NUM_0
-#define I2C_SDA_GPIO 6
-#define I2C_SCL_GPIO 7
-#define I2C_FREQ_HZ 100000
-#define I2C_TIMEOUT_MS 100
 
 #define BMP280_ADDR_LOW 0x76
 #define BMP280_ADDR_HIGH 0x77
@@ -40,73 +34,20 @@ typedef struct {
     int16_t dig_p9;
 } bmp280_calibration_t;
 
-static bool i2c_iniciado = false;
 static bool bmp280_inicializado = false;
 static uint8_t bmp280_addr = 0;
 static int32_t bmp280_t_fine = 0;
 static bmp280_calibration_t bmp280_calibration = {0};
 
-static void i2c_init_if_needed(void)
-{
-    if (i2c_iniciado) {
-        return;
-    }
-
-    i2c_config_t config = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_SDA_GPIO,
-        .scl_io_num = I2C_SCL_GPIO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_FREQ_HZ,
-    };
-
-    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &config));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_PORT, config.mode, 0, 0, 0));
-
-    i2c_iniciado = true;
-}
-
-static esp_err_t leer_registro_u8(uint8_t addr, uint8_t reg, uint8_t *valor)
-{
-    return i2c_master_write_read_device(
-        I2C_PORT,
-        addr,
-        &reg,
-        sizeof(reg),
-        valor,
-        1,
-        pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-}
-
-static esp_err_t leer_registros(uint8_t addr, uint8_t reg, uint8_t *buffer, size_t len)
-{
-    return i2c_master_write_read_device(
-        I2C_PORT,
-        addr,
-        &reg,
-        sizeof(reg),
-        buffer,
-        len,
-        pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-}
-
-static esp_err_t escribir_registro_u8(uint8_t addr, uint8_t reg, uint8_t value)
-{
-    uint8_t payload[2] = {reg, value};
-
-    return i2c_master_write_to_device(I2C_PORT, addr, payload, sizeof(payload), pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-}
-
 static esp_err_t detectar_bmp280(uint8_t *detected_addr, uint8_t *chip_id)
 {
-    esp_err_t ret = leer_registro_u8(BMP280_ADDR_LOW, BMP280_CHIP_ID_REG, chip_id);
+    esp_err_t ret = i2c_bus_read_u8(BMP280_ADDR_LOW, BMP280_CHIP_ID_REG, chip_id);
     if (ret == ESP_OK) {
         *detected_addr = BMP280_ADDR_LOW;
         return ESP_OK;
     }
 
-    ret = leer_registro_u8(BMP280_ADDR_HIGH, BMP280_CHIP_ID_REG, chip_id);
+    ret = i2c_bus_read_u8(BMP280_ADDR_HIGH, BMP280_CHIP_ID_REG, chip_id);
     if (ret == ESP_OK) {
         *detected_addr = BMP280_ADDR_HIGH;
         return ESP_OK;
@@ -135,16 +76,16 @@ static bool bmp280_configurar_medicion(void)
 {
     uint8_t status = 0;
 
-    if (escribir_registro_u8(bmp280_addr, BMP280_CONFIG_REG, 0x00) != ESP_OK) {
+    if (i2c_bus_write_u8(bmp280_addr, BMP280_CONFIG_REG, 0x00) != ESP_OK) {
         return false;
     }
 
-    if (escribir_registro_u8(bmp280_addr, BMP280_CTRL_MEAS_REG, 0x27) != ESP_OK) {
+    if (i2c_bus_write_u8(bmp280_addr, BMP280_CTRL_MEAS_REG, 0x27) != ESP_OK) {
         return false;
     }
 
     for (int i = 0; i < 10; i++) {
-        if (leer_registro_u8(bmp280_addr, BMP280_STATUS_REG, &status) != ESP_OK) {
+        if (i2c_bus_read_u8(bmp280_addr, BMP280_STATUS_REG, &status) != ESP_OK) {
             return false;
         }
 
@@ -164,8 +105,7 @@ bool bmp280_init(void)
     uint8_t calibration_raw[24] = {0};
     esp_err_t ret = ESP_FAIL;
 
-    i2c_init_if_needed();
-    ESP_LOGI(TAG, "Bus I2C listo en SDA=GPIO%d, SCL=GPIO%d.", I2C_SDA_GPIO, I2C_SCL_GPIO);
+    i2c_bus_init_if_needed();
 
     ret = detectar_bmp280(&bmp280_addr, &chip_id);
 
@@ -184,7 +124,7 @@ bool bmp280_init(void)
         return false;
     }
 
-    ret = leer_registros(bmp280_addr, BMP280_CALIB_START_REG, calibration_raw, sizeof(calibration_raw));
+    ret = i2c_bus_read(bmp280_addr, BMP280_CALIB_START_REG, calibration_raw, sizeof(calibration_raw));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "No pude leer la calibracion del BMP280.");
         return false;
@@ -222,7 +162,7 @@ bool bmp280_read_temperature_and_pressure(float *temperature_c, float *pressure_
         return false;
     }
 
-    if (leer_registros(bmp280_addr, 0xF7, raw_data, sizeof(raw_data)) != ESP_OK) {
+    if (i2c_bus_read(bmp280_addr, 0xF7, raw_data, sizeof(raw_data)) != ESP_OK) {
         return false;
     }
 

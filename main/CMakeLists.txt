@@ -1,5 +1,7 @@
 set(component_srcs
+    "bh1750.c"
     "bmp280_probe.c"
+    "i2c_bus.c"
     "wifi_config.c"
     "mqtt_telemetry.c"
     "time_sync.c"

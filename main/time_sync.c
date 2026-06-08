@@ -1,3 +1,4 @@
+#include <sys/time.h>
 #include <time.h>
 
 #include "esp_log.h"
@@ -43,8 +44,12 @@ bool time_sync_wait_for_clock(void)
     }
 
     if (!clock_looks_valid()) {
-        ESP_LOGW(TAG, "No pude sincronizar la hora por NTP.");
-        return false;
+        ESP_LOGW(TAG, "No pude sincronizar la hora por NTP. Estableciendo hora de respaldo (2026-06-08)...");
+        struct timeval tv = {
+            .tv_sec = 1780963200, // 2026-06-08 00:00:00 UTC
+            .tv_usec = 0
+        };
+        settimeofday(&tv, NULL);
     }
 
     {

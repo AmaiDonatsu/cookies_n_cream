@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_event.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
@@ -16,14 +17,30 @@ static const char *TAG = "mqtt_telemetry";
 
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static bool mqtt_connected = false;
+static char mqtt_client_id[64] = {0};
 static char mqtt_topic[96] = {0};
 
-#if MQTT_CERT_FILES_PRESENT
-static char mqtt_client_id[64] = {0};
+#ifndef MQTT_AUTH_MODE_CLOUD_TLS
+#define MQTT_AUTH_MODE_CLOUD_TLS 1
+#endif
 
+#ifndef MQTT_AUTH_MODE_LOCAL_MTLS
+#define MQTT_AUTH_MODE_LOCAL_MTLS 2
+#endif
+
+#ifndef MQTT_AUTH_MODE
+#define MQTT_AUTH_MODE MQTT_AUTH_MODE_LOCAL_MTLS
+#endif
+
+#ifndef MQTT_TLS_USE_CRT_BUNDLE
+#define MQTT_TLS_USE_CRT_BUNDLE 1
+#endif
+
+#if MQTT_CERT_FILES_PRESENT
 extern const uint8_t ca_pem_start[] asm("_binary_ca_pem_start");
 extern const uint8_t device_crt_start[] asm("_binary_device_crt_start");
 extern const uint8_t device_key_start[] asm("_binary_device_key_start");
+#endif
 
 static void build_client_identity(void)
 {
@@ -57,7 +74,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         mqtt_connected = true;
+#if MQTT_AUTH_MODE == MQTT_AUTH_MODE_CLOUD_TLS
+        ESP_LOGI(TAG, "Conectado al broker MQTT por TLS + usuario/contrasena.");
+#else
         ESP_LOGI(TAG, "Conectado al broker MQTT por mTLS.");
+#endif
         break;
     case MQTT_EVENT_DISCONNECTED:
         mqtt_connected = false;
@@ -80,38 +101,68 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
     }
 }
-#endif
 
-bool mqtt_telemetry_init(void)
+static bool mqtt_validate_configuration(void)
 {
+#if MQTT_AUTH_MODE == MQTT_AUTH_MODE_CLOUD_TLS
+    if (strlen(MQTT_USERNAME) == 0 || strlen(MQTT_PASSWORD) == 0) {
+        ESP_LOGE(TAG, "MQTT_USERNAME o MQTT_PASSWORD estan vacios.");
+        ESP_LOGW(TAG, "Genera main/mqtt_config.h desde .env y recompila.");
+        return false;
+    }
+
+    return true;
+#elif MQTT_AUTH_MODE == MQTT_AUTH_MODE_LOCAL_MTLS
 #if !MQTT_CERT_FILES_PRESENT
     ESP_LOGE(TAG, "No encontre main/certs/ca.pem, main/certs/device.crt y main/certs/device.key.");
     ESP_LOGW(TAG, "Sin esos archivos no puedo iniciar mTLS. Colocalos fuera de git y recompila.");
     return false;
 #else
-    const esp_mqtt_client_config_t mqtt_cfg = {
-        .broker = {
-            .address.uri = MQTT_BROKER_URI,
-            .verification.certificate = (const char *)ca_pem_start,
-        },
-        .credentials = {
-            .client_id = mqtt_client_id,
-            .authentication = {
-                .certificate = (const char *)device_crt_start,
-                .key = (const char *)device_key_start,
-            },
-        },
-    };
+    return true;
+#endif
+#else
+    ESP_LOGE(TAG, "MQTT_AUTH_MODE no es valido.");
+    return false;
+#endif
+}
+
+bool mqtt_telemetry_init(void)
+{
+    esp_mqtt_client_config_t mqtt_cfg = {0};
 
     if (mqtt_client != NULL) {
         return true;
     }
 
+    if (!mqtt_validate_configuration()) {
+        return false;
+    }
+
     build_client_identity();
+
+    mqtt_cfg.broker.address.uri = MQTT_BROKER_URI;
+    mqtt_cfg.credentials.client_id = mqtt_client_id;
+
+#if MQTT_AUTH_MODE == MQTT_AUTH_MODE_CLOUD_TLS
+#if MQTT_TLS_USE_CRT_BUNDLE
+    mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+#endif
+    mqtt_cfg.credentials.username = MQTT_USERNAME;
+    mqtt_cfg.credentials.authentication.password = MQTT_PASSWORD;
+#else
+    mqtt_cfg.broker.verification.certificate = (const char *)ca_pem_start;
+    mqtt_cfg.credentials.authentication.certificate = (const char *)device_crt_start;
+    mqtt_cfg.credentials.authentication.key = (const char *)device_key_start;
+#endif
 
     ESP_LOGI(TAG, "Broker MQTT: %s", MQTT_BROKER_URI);
     ESP_LOGI(TAG, "Topic de telemetria: %s", mqtt_topic);
     ESP_LOGI(TAG, "Client ID: %s", mqtt_client_id);
+#if MQTT_AUTH_MODE == MQTT_AUTH_MODE_CLOUD_TLS
+    ESP_LOGI(TAG, "Modo MQTT: nube por TLS + usuario/contrasena.");
+#else
+    ESP_LOGI(TAG, "Modo MQTT: broker local por mTLS.");
+#endif
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     if (mqtt_client == NULL) {
@@ -123,7 +174,6 @@ bool mqtt_telemetry_init(void)
     ESP_ERROR_CHECK(esp_mqtt_client_start(mqtt_client));
 
     return true;
-#endif
 }
 
 bool mqtt_telemetry_connected(void)

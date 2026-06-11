@@ -10,3 +10,5 @@ main/wifi_credentials.h
 main/mqtt_config.h
 main/certs/
 notes
+
+.env

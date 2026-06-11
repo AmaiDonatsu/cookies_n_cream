@@ -1,8 +1,23 @@
 #ifndef MQTT_CONFIG_H
 #define MQTT_CONFIG_H
 
-#define MQTT_BROKER_URI "mqtts://192.168.1.100:8883"
+#define MQTT_AUTH_MODE_CLOUD_TLS 1
+#define MQTT_AUTH_MODE_LOCAL_MTLS 2
+
+#define MQTT_BROKER_URI "mqtts://your-cloud-broker.example.com:8883"
 #define MQTT_DEVICE_ID "DEV-ESP32C6-001"
 #define MQTT_PUBLISH_INTERVAL_MS 5000
+#define MQTT_AUTH_MODE MQTT_AUTH_MODE_CLOUD_TLS
+#define MQTT_TLS_USE_CRT_BUNDLE 1
+#define MQTT_USERNAME "replace-with-cloud-username"
+#define MQTT_PASSWORD "replace-with-cloud-password"
+
+/*
+ * Para volver al broker local por mTLS:
+ *
+ * 1. Cambia MQTT_BROKER_URI al broker local.
+ * 2. Usa: #define MQTT_AUTH_MODE MQTT_AUTH_MODE_LOCAL_MTLS
+ * 3. Importa los certificados a main/certs con tools/import-mqtt-certs.ps1
+ */
 
 #endif // MQTT_CONFIG_H

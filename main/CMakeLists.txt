@@ -1,4 +1,5 @@
 set(component_srcs
+    "ads1115.c"
     "bh1750.c"
     "bmp280_probe.c"
     "i2c_bus.c"

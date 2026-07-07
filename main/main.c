@@ -1,8 +1,10 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ads1115.h"
 #include "bh1750.h"
 #include "bmp280_probe.h"
+#include "i2c_bus.h"
 #include "mqtt_config.h"
 #include "mqtt_telemetry.h"
 #include "time_sync.h"
@@ -15,13 +17,32 @@ void app_main(void)
     float temperature_c = 0.0f;
     float pressure_hpa = 0.0f;
     float luminosity_lux = 0.0f;
+    int16_t ads_raw = 0;
+    float ads_voltage = 0.0f;
     bool mqtt_started = false;
     bool clock_ready = false;
     bool bh1750_available = false;
     bool luminosity_ready = false;
+    bool ads1115_available = false;
+    bool ads1115_ready = false;
 
-    ESP_LOGI(TAG, "Iniciando estacion Wi-Fi + BMP280 + BH1750 + telemetria MQTT.");
+    ESP_LOGI(TAG, "Iniciando estacion Wi-Fi + BMP280 + BH1750 + ADS1115 + telemetria MQTT.");
     ESP_LOGI(TAG, "Device ID MQTT: %s", MQTT_DEVICE_ID);
+
+    // Inicializar el bus I2C y realizar escaneo
+    i2c_bus_init_if_needed();
+    ESP_LOGI(TAG, "Escaneando dispositivos en el bus I2C...");
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        esp_err_t err = i2c_master_cmd_begin(I2C_BUS_PORT, cmd, pdMS_TO_TICKS(30));
+        i2c_cmd_link_delete(cmd);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "  -> Encontrado dispositivo en: 0x%02X", addr);
+        }
+    }
 
     if (!bmp280_init()) {
         while (1) {
@@ -35,11 +56,21 @@ void app_main(void)
         ESP_LOGW(TAG, "BH1750 no disponible. Seguiremos publicando sin luminosidad.");
     }
 
+    ads1115_available = ads1115_init();
+    if (!ads1115_available) {
+        ESP_LOGW(TAG, "ADS1115 no disponible. Seguiremos sin lecturas analogicas.");
+    }
+
     wifi_init_sta();
 
     while (1) {
         if (bmp280_read_temperature_and_pressure(&temperature_c, &pressure_hpa)) {
             luminosity_ready = bh1750_available && bh1750_read_lux(&luminosity_lux);
+            ads1115_ready = ads1115_available && ads1115_read_raw(0, &ads_raw);
+
+            if (ads1115_ready) {
+                ads_voltage = ads1115_raw_to_voltage(ads_raw);
+            }
 
             if (luminosity_ready) {
                 ESP_LOGI(TAG, "Lecturas -> Temperatura: %.2f C, Presion: %.2f hPa, Luz: %.2f lx",
@@ -50,6 +81,12 @@ void app_main(void)
                 }
                 ESP_LOGI(TAG, "Lecturas -> Temperatura: %.2f C, Presion: %.2f hPa",
                          temperature_c, pressure_hpa);
+            }
+
+            if (ads1115_ready) {
+                ESP_LOGI(TAG, "ADS1115 -> Canal 0: %d (%.3f V)", ads_raw, ads_voltage);
+            } else if (ads1115_available) {
+                ESP_LOGW(TAG, "No pude leer el canal 0 del ADS1115 en este ciclo.");
             }
 
             if (wifi_esta_conectado() && !mqtt_started) {

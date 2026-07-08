@@ -9,6 +9,6 @@ bool mqtt_telemetry_init(void);
 bool mqtt_telemetry_connected(void);
 esp_err_t mqtt_telemetry_publish_temperature(float temperature_c);
 esp_err_t mqtt_telemetry_publish_environment(float temperature_c, float pressure_hpa);
-esp_err_t mqtt_telemetry_publish_environment_light(float temperature_c, float pressure_hpa, float luminosity_lux, bool include_luminosity);
+esp_err_t mqtt_telemetry_publish_environment_light(float temperature_c, float pressure_hpa, float luminosity_lux, bool include_luminosity, float ads_voltage, bool include_ads);
 
 #endif // MQTT_TELEMETRY_H

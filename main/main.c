@@ -104,7 +104,9 @@ void app_main(void)
                         temperature_c,
                         pressure_hpa,
                         luminosity_lux,
-                        luminosity_ready) != ESP_OK) {
+                        luminosity_ready,
+                        ads_voltage,
+                        ads1115_ready) != ESP_OK) {
                     ESP_LOGW(TAG, "No pude publicar las lecturas ambientales en este ciclo.");
                 }
             } else if (!wifi_esta_conectado()) {
